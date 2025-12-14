@@ -1,0 +1,9 @@
+aiogram<4,>=3.4
+asyncpg<1,>=0.29
+python-dotenv<2,>=1.0
+PyYAML<7,>=6.0
+
+[dev]
+pytest<9,>=8
+pytest-asyncio<1,>=0.24
+ruff<1,>=0.6
