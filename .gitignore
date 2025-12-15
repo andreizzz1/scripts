@@ -3,6 +3,8 @@
 /data-py
 .env
 .idea
+.vscode
+.github/workflows
 *.db
 *.sqlite
 *.sqlite3
