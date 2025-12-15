@@ -1,4 +1,14 @@
 /target
 /data
+/data-py
 .env
 .idea
+*.db
+*.sqlite
+*.sqlite3
+*.db-journal
+*.sqlite-journal
+*.db-wal
+*.sqlite-wal
+*.db-shm
+*.sqlite-shm

@@ -874,13 +874,12 @@ async def main() -> None:
     token = _require_env("TELOXIDE_TOKEN")
     cfg = load_config()
 
+    assets_dir = Path(__file__).resolve().parent / "assets"
     db = await Database.connect()
-    await apply_sql_migrations(db.pool, repo_root / "migrations")
+    await apply_sql_migrations(db.pool, assets_dir / "migrations")
 
-    i18n = I18n.from_locales_dir(repo_root / "locales", fallback_locale="en")
-    privacy_policy = load_privacy_policy(
-        rust_privacy_dir=repo_root / "src" / "handlers" / "privacy"
-    )
+    i18n = I18n.from_locales_dir(assets_dir / "locales", fallback_locale="en")
+    privacy_policy = load_privacy_policy(rust_privacy_dir=assets_dir / "privacy")
 
     help_context = {
         "bot_name": "DickGrowerBot",
@@ -894,9 +893,7 @@ async def main() -> None:
         "git_repo": _require_env("HELP_GIT_REPO"),
         "help_pussies_percentage": float(os.getenv("HELP_PUSSIES_COEF", "0.0")) * 100.0,
     }
-    help_container = render_help_messages(
-        rust_help_dir=repo_root / "src" / "help", context=help_context
-    )
+    help_container = render_help_messages(rust_help_dir=assets_dir / "help", context=help_context)
 
     repos = Repositories.create(db.pool, cfg)
     perks = [
