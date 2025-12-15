@@ -5,7 +5,6 @@ import logging
 import os
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Optional
 
 import asyncpg
 from aiogram import Bot, Dispatcher, F, Router
@@ -15,7 +14,13 @@ from aiogram.filters import Command, CommandObject
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.storage.memory import MemoryStorage
-from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
+from aiogram.types import (
+    CallbackQuery,
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    MenuButtonDefault,
+    Message,
+)
 from dotenv import load_dotenv
 
 from .config import AppConfig, DickOfDaySelectionMode, load_config
@@ -25,8 +30,7 @@ from .help_content import load_privacy_policy, render_help_messages
 from .i18n import I18n
 from .incrementor import Incrementor
 from .perks import HelpPussiesPerk, LoanPayoutPerk
-from .repo import ChatIdKind, ChatIdPartiality, PromoActivationError, Repositories
-from .repo import ExternalUser
+from .repo import ChatIdKind, ChatIdPartiality, ExternalUser, PromoActivationError, Repositories
 from .utils import get_full_name, time_till_next_day
 
 CALLBACK_PREFIX_TOP_PAGE = "top:page:"
@@ -52,6 +56,7 @@ def _decode_deeplink_payload(encoded: str) -> str:
 def _word_chats_ru(count: int) -> str:
     return "чате" if count == 1 else "чатах"
 
+
 def _convert_name_for_import(original_bot_username: str, full_name: str) -> str:
     if original_bot_username == "pipisabot":
         return full_name[:13]
@@ -68,14 +73,22 @@ def _require_env(key: str) -> str:
 def _build_top_keyboard(page: int, has_more: bool) -> InlineKeyboardMarkup:
     buttons: list[InlineKeyboardButton] = []
     if page > 0:
-        buttons.append(InlineKeyboardButton(text="⬅️", callback_data=f"{CALLBACK_PREFIX_TOP_PAGE}{page-1}"))
+        buttons.append(
+            InlineKeyboardButton(text="⬅️", callback_data=f"{CALLBACK_PREFIX_TOP_PAGE}{page - 1}")
+        )
     if has_more:
-        buttons.append(InlineKeyboardButton(text="➡️", callback_data=f"{CALLBACK_PREFIX_TOP_PAGE}{page+1}"))
+        buttons.append(
+            InlineKeyboardButton(text="➡️", callback_data=f"{CALLBACK_PREFIX_TOP_PAGE}{page + 1}")
+        )
     return InlineKeyboardMarkup(inline_keyboard=[buttons])
 
 
-async def _reply_html(message: Message, text: str, *, reply_markup: Optional[InlineKeyboardMarkup] = None) -> None:
-    await message.answer(text, parse_mode=ParseMode.HTML, reply_markup=reply_markup, disable_web_page_preview=True)
+async def _reply_html(
+    message: Message, text: str, *, reply_markup: InlineKeyboardMarkup | None = None
+) -> None:
+    await message.answer(
+        text, parse_mode=ParseMode.HTML, reply_markup=reply_markup, disable_web_page_preview=True
+    )
 
 
 router = Router()
@@ -95,13 +108,15 @@ async def cmd_privacy(message: Message, privacy_policy: dict[str, str]) -> None:
 
 
 @router.message(Command("start"))
-async def cmd_start(message: Message, command: CommandObject, help_container, i18n: I18n, repos: Repositories) -> None:  # type: ignore[no-untyped-def]
+async def cmd_start(
+    message: Message, command: CommandObject, help_container, i18n: I18n, repos: Repositories
+) -> None:  # type: ignore[no-untyped-def]
     locale = normalize_locale(getattr(message.from_user, "language_code", None))
     greeting = i18n.t("titles.greeting", locale)
 
     args = (command.args or "").strip()
     if args.startswith(PROMO_START_PARAM_PREFIX):
-        encoded = args[len(PROMO_START_PARAM_PREFIX):]
+        encoded = args[len(PROMO_START_PARAM_PREFIX) :]
         try:
             promo_code = _decode_deeplink_payload(encoded)
             res = await repos.promo.activate(message.from_user.id, promo_code)
@@ -113,7 +128,9 @@ async def cmd_start(message: Message, command: CommandObject, help_container, i1
                 affected_chats=res.chats_affected,
                 word_chats=_word_chats_ru(res.chats_affected),
             )
-            await _reply_html(message, i18n.t("commands.promo.success.template", locale, ending=ending))
+            await _reply_html(
+                message, i18n.t("commands.promo.success.template", locale, ending=ending)
+            )
         except PromoActivationError as e:
             await _reply_html(message, i18n.t(f"commands.promo.errors.{e.code}", locale))
         except Exception:
@@ -125,7 +142,9 @@ async def cmd_start(message: Message, command: CommandObject, help_container, i1
 
 
 @router.message(Command("grow"))
-async def cmd_grow(message: Message, repos: Repositories, incrementor: Incrementor, i18n: I18n, cfg: AppConfig) -> None:
+async def cmd_grow(
+    message: Message, repos: Repositories, incrementor: Incrementor, i18n: I18n, cfg: AppConfig
+) -> None:
     if message.from_user is None:
         return
     locale = normalize_locale(message.from_user.language_code)
@@ -133,8 +152,12 @@ async def cmd_grow(message: Message, repos: Repositories, incrementor: Increment
 
     name = get_full_name(message.from_user)
     user = await repos.users.create_or_update(message.from_user.id, name)
-    days_since_registration = int((datetime.now(tz=timezone.utc) - user.created_at).total_seconds() // 86400)
-    incr = await incrementor.growth_increment(message.from_user.id, chat.kind(cfg.features.chats_merging), days_since_registration)
+    days_since_registration = int(
+        (datetime.now(tz=timezone.utc) - user.created_at).total_seconds() // 86400
+    )
+    incr = await incrementor.growth_increment(
+        message.from_user.id, chat.kind(cfg.features.chats_merging), days_since_registration
+    )
 
     try:
         result = await repos.dicks.create_or_grow(message.from_user.id, chat, incr.total)
@@ -218,11 +241,16 @@ async def cmd_top(message: Message, repos: Repositories, cfg: AppConfig, i18n: I
 
 
 @router.callback_query(F.data.startswith(CALLBACK_PREFIX_TOP_PAGE))
-async def cb_top_page(query: CallbackQuery, repos: Repositories, cfg: AppConfig, i18n: I18n) -> None:
+async def cb_top_page(
+    query: CallbackQuery, repos: Repositories, cfg: AppConfig, i18n: I18n
+) -> None:
     if query.from_user is None or query.data is None:
         return
     if not cfg.features.top_unlimited:
-        await query.answer(i18n.t("errors.feature_disabled", normalize_locale(query.from_user.language_code)), show_alert=True)
+        await query.answer(
+            i18n.t("errors.feature_disabled", normalize_locale(query.from_user.language_code)),
+            show_alert=True,
+        )
         return
 
     locale = normalize_locale(query.from_user.language_code)
@@ -251,11 +279,15 @@ async def cb_top_page(query: CallbackQuery, repos: Repositories, cfg: AppConfig,
         locale=locale,
     )
     await query.answer()
-    await query.message.edit_text(text, parse_mode=ParseMode.HTML, reply_markup=_build_top_keyboard(page, has_more))
+    await query.message.edit_text(
+        text, parse_mode=ParseMode.HTML, reply_markup=_build_top_keyboard(page, has_more)
+    )
 
 
 @router.message(Command("dick_of_day", "dod"))
-async def cmd_dod(message: Message, repos: Repositories, incrementor: Incrementor, cfg: AppConfig, i18n: I18n) -> None:
+async def cmd_dod(
+    message: Message, repos: Repositories, incrementor: Incrementor, cfg: AppConfig, i18n: I18n
+) -> None:
     if message.from_user is None:
         return
     locale = normalize_locale(message.from_user.language_code)
@@ -264,8 +296,13 @@ async def cmd_dod(message: Message, repos: Repositories, incrementor: Incremento
 
     if cfg.features.dod_selection_mode == DickOfDaySelectionMode.WEIGHTS:
         winner = await repos.users.get_random_active_member_with_poor_in_priority(chat_kind)
-    elif cfg.features.dod_selection_mode == DickOfDaySelectionMode.EXCLUSION and cfg.dod_rich_exclusion_ratio:
-        winner = await repos.users.get_random_active_poor_member(chat_kind, cfg.dod_rich_exclusion_ratio)
+    elif (
+        cfg.features.dod_selection_mode == DickOfDaySelectionMode.EXCLUSION
+        and cfg.dod_rich_exclusion_ratio
+    ):
+        winner = await repos.users.get_random_active_poor_member(
+            chat_kind, cfg.dod_rich_exclusion_ratio
+        )
     else:
         winner = await repos.users.get_random_active_member(chat_kind)
 
@@ -291,7 +328,9 @@ async def cmd_dod(message: Message, repos: Repositories, incrementor: Incremento
             answer = f"{answer}\n{i18n.t('commands.dod.position', locale, pos=result.pos_in_top)}"
     except asyncpg.PostgresError as e:
         if getattr(e, "sqlstate", None) == "GD0E2":
-            answer = i18n.t("commands.dod.already_chosen", locale, name=str(getattr(e, "message", "")))
+            answer = i18n.t(
+                "commands.dod.already_chosen", locale, name=str(getattr(e, "message", ""))
+            )
         else:
             raise
 
@@ -341,9 +380,15 @@ async def cmd_loan(message: Message, repos: Repositories, cfg: AppConfig, i18n: 
     )
     await _reply_html(
         message,
-        i18n.t("commands.loan.confirmation.text", locale, debt=debt, payout_percentage=payout_percentage),
+        i18n.t(
+            "commands.loan.confirmation.text",
+            locale,
+            debt=debt,
+            payout_percentage=payout_percentage,
+        ),
         reply_markup=keyboard,
     )
+
 
 @router.message(Command("stats"))
 async def cmd_stats(message: Message, repos: Repositories, cfg: AppConfig, i18n: I18n) -> None:
@@ -391,7 +436,9 @@ async def cmd_stats(message: Message, repos: Repositories, cfg: AppConfig, i18n:
 
 
 @router.message(Command("promo"))
-async def cmd_promo(message: Message, command: CommandObject, state: FSMContext, repos: Repositories, i18n: I18n) -> None:  # type: ignore[no-untyped-def]
+async def cmd_promo(
+    message: Message, command: CommandObject, state: FSMContext, repos: Repositories, i18n: I18n
+) -> None:  # type: ignore[no-untyped-def]
     if message.from_user is None:
         return
     if message.chat.type != "private":
@@ -407,7 +454,9 @@ async def cmd_promo(message: Message, command: CommandObject, state: FSMContext,
 
 
 @router.message(PromoFlow.requested)
-async def promo_requested(message: Message, state: FSMContext, repos: Repositories, i18n: I18n) -> None:
+async def promo_requested(
+    message: Message, state: FSMContext, repos: Repositories, i18n: I18n
+) -> None:
     if message.from_user is None:
         return
     locale = normalize_locale(message.from_user.language_code)
@@ -418,7 +467,9 @@ async def promo_requested(message: Message, state: FSMContext, repos: Repositori
     await _activate_promo(message, message.text.strip(), repos, i18n, locale)
 
 
-async def _activate_promo(message: Message, code: str, repos: Repositories, i18n: I18n, locale: str) -> None:
+async def _activate_promo(
+    message: Message, code: str, repos: Repositories, i18n: I18n, locale: str
+) -> None:
     import re
 
     if not re.fullmatch(r"[a-zA-Z0-9_-]{4,16}", code or ""):
@@ -464,7 +515,9 @@ async def cb_loan(query: CallbackQuery, repos: Repositories, cfg: AppConfig, i18
             try:
                 await query.message.delete()
             except Exception:
-                await query.message.edit_text(i18n.t("commands.loan.callback.refused", locale), parse_mode=ParseMode.HTML)
+                await query.message.edit_text(
+                    i18n.t("commands.loan.callback.refused", locale), parse_mode=ParseMode.HTML
+                )
         return
 
     if action != "confirmed":
@@ -474,7 +527,10 @@ async def cb_loan(query: CallbackQuery, repos: Repositories, cfg: AppConfig, i18
         # old format without payout ratio -> treat as changed
         await query.answer()
         if query.message:
-            await query.message.edit_text(i18n.t("commands.loan.callback.payout_ratio_changed", locale), parse_mode=ParseMode.HTML)
+            await query.message.edit_text(
+                i18n.t("commands.loan.callback.payout_ratio_changed", locale),
+                parse_mode=ParseMode.HTML,
+            )
         return
     try:
         value = int(parts[3])
@@ -489,7 +545,10 @@ async def cb_loan(query: CallbackQuery, repos: Repositories, cfg: AppConfig, i18
     if payout_ratio != cfg.loan_payout_ratio:
         await query.answer()
         if query.message:
-            await query.message.edit_text(i18n.t("commands.loan.callback.payout_ratio_changed", locale), parse_mode=ParseMode.HTML)
+            await query.message.edit_text(
+                i18n.t("commands.loan.callback.payout_ratio_changed", locale),
+                parse_mode=ParseMode.HTML,
+            )
         return
 
     if not query.message:
@@ -498,7 +557,9 @@ async def cb_loan(query: CallbackQuery, repos: Repositories, cfg: AppConfig, i18
     await repos.loans.borrow(uid, ChatIdKind.from_chat_id(query.message.chat.id), value)
     await query.answer()
     if query.message:
-        await query.message.edit_text(i18n.t("commands.loan.callback.success", locale), parse_mode=ParseMode.HTML)
+        await query.message.edit_text(
+            i18n.t("commands.loan.callback.success", locale), parse_mode=ParseMode.HTML
+        )
 
 
 def _new_short_timestamp() -> int:
@@ -506,7 +567,9 @@ def _new_short_timestamp() -> int:
 
 
 @router.message(Command("pvp", "battle", "attack", "fight"))
-async def cmd_pvp(message: Message, command: CommandObject, repos: Repositories, cfg: AppConfig, i18n: I18n) -> None:  # type: ignore[no-untyped-def]
+async def cmd_pvp(
+    message: Message, command: CommandObject, repos: Repositories, cfg: AppConfig, i18n: I18n
+) -> None:  # type: ignore[no-untyped-def]
     if message.from_user is None:
         return
     locale = normalize_locale(message.from_user.language_code)
@@ -573,11 +636,15 @@ async def cb_pvp(query: CallbackQuery, repos: Repositories, cfg: AppConfig, i18n
     )
 
     if not enough_acceptor:
-        await query.answer(i18n.t("commands.pvp.errors.not_enough.acceptor", locale), show_alert=True)
+        await query.answer(
+            i18n.t("commands.pvp.errors.not_enough.acceptor", locale), show_alert=True
+        )
         return
     if not enough_initiator:
         await query.answer()
-        await query.message.edit_text(i18n.t("commands.pvp.errors.not_enough.initiator", locale), parse_mode=ParseMode.HTML)
+        await query.message.edit_text(
+            i18n.t("commands.pvp.errors.not_enough.initiator", locale), parse_mode=ParseMode.HTML
+        )
         return
 
     import secrets
@@ -587,7 +654,9 @@ async def cb_pvp(query: CallbackQuery, repos: Repositories, cfg: AppConfig, i18n
     else:
         winner_uid, loser_uid = query.from_user.id, initiator_uid
 
-    loser_res, winner_res = await repos.dicks.move_length(chat, from_uid=loser_uid, to_uid=winner_uid, length=bet)
+    loser_res, winner_res = await repos.dicks.move_length(
+        chat, from_uid=loser_uid, to_uid=winner_uid, length=bet
+    )
 
     withheld_part = ""
     loan = await repos.loans.get_active_loan(winner_uid, chat_kind)
@@ -613,7 +682,11 @@ async def cb_pvp(query: CallbackQuery, repos: Repositories, cfg: AppConfig, i18n
             winner_win_streak_max=winner_stats.win_streak_max,
         )
         if loser_prev_streak > 1:
-            stats_text += "\n" + i18n.t("commands.pvp.results.stats.lost_win_streak", locale, lost_win_streak=loser_prev_streak)
+            stats_text += "\n" + i18n.t(
+                "commands.pvp.results.stats.lost_win_streak",
+                locale,
+                lost_win_streak=loser_prev_streak,
+            )
         stats_part = "\n\n" + stats_text
 
     winner_user = await repos.users.get(winner_uid)
@@ -631,12 +704,21 @@ async def cb_pvp(query: CallbackQuery, repos: Repositories, cfg: AppConfig, i18n
     )
 
     if winner_res.pos_in_top is not None and loser_res.pos_in_top is not None:
-        winner_pos = i18n.t("commands.pvp.results.position.winner", locale, name=winner_name, pos=winner_res.pos_in_top)
-        loser_pos = i18n.t("commands.pvp.results.position.loser", locale, name=loser_name, pos=loser_res.pos_in_top)
+        winner_pos = i18n.t(
+            "commands.pvp.results.position.winner",
+            locale,
+            name=winner_name,
+            pos=winner_res.pos_in_top,
+        )
+        loser_pos = i18n.t(
+            "commands.pvp.results.position.loser", locale, name=loser_name, pos=loser_res.pos_in_top
+        )
         main_part = f"{main_part}\n\n{winner_pos}\n{loser_pos}"
 
     await query.answer()
-    await query.message.edit_text(f"{main_part}{withheld_part}{stats_part}", parse_mode=ParseMode.HTML)
+    await query.message.edit_text(
+        f"{main_part}{withheld_part}{stats_part}", parse_mode=ParseMode.HTML
+    )
 
 
 @router.message(Command("import"))
@@ -657,21 +739,29 @@ async def cmd_import(message: Message, bot: Bot, repos: Repositories, i18n: I18n
     reply = message.reply_to_message
     if reply is None or getattr(reply, "forward_origin", None) is not None:
         origin_bots = ", ".join(f"@{b}" for b in sorted(ORIGINAL_BOT_USERNAMES))
-        await _reply_html(message, i18n.t("commands.import.errors.not_reply", locale, origin_bots=origin_bots))
+        await _reply_html(
+            message, i18n.t("commands.import.errors.not_reply", locale, origin_bots=origin_bots)
+        )
         return
     if reply.from_user is None or not reply.from_user.is_bot or not reply.from_user.username:
         origin_bots = ", ".join(f"@{b}" for b in sorted(ORIGINAL_BOT_USERNAMES))
-        await _reply_html(message, i18n.t("commands.import.errors.not_reply", locale, origin_bots=origin_bots))
+        await _reply_html(
+            message, i18n.t("commands.import.errors.not_reply", locale, origin_bots=origin_bots)
+        )
         return
     original_bot = reply.from_user.username
     if original_bot not in ORIGINAL_BOT_USERNAMES:
         origin_bots = ", ".join(f"@{b}" for b in sorted(ORIGINAL_BOT_USERNAMES))
-        await _reply_html(message, i18n.t("commands.import.errors.not_reply", locale, origin_bots=origin_bots))
+        await _reply_html(
+            message, i18n.t("commands.import.errors.not_reply", locale, origin_bots=origin_bots)
+        )
         return
     text = reply.text or ""
     if not text:
         origin_bots = ", ".join(f"@{b}" for b in sorted(ORIGINAL_BOT_USERNAMES))
-        await _reply_html(message, i18n.t("commands.import.errors.not_reply", locale, origin_bots=origin_bots))
+        await _reply_html(
+            message, i18n.t("commands.import.errors.not_reply", locale, origin_bots=origin_bots)
+        )
         return
 
     import re
@@ -691,15 +781,24 @@ async def cmd_import(message: Message, bot: Bot, repos: Repositories, i18n: I18n
         else:
             matches.append(m)
     if invalid:
-        invalid_lines = "\n".join(i18n.t("commands.import.errors.invalid_lines.line", locale, line=escape_html(l)) for l in invalid)
-        await _reply_html(message, i18n.t("commands.import.errors.invalid_lines.template", locale, invalid_lines=invalid_lines))
+        invalid_lines = "\n".join(
+            i18n.t(
+                "commands.import.errors.invalid_lines.line", locale, line=escape_html(invalid_line)
+            )
+            for invalid_line in invalid
+        )
+        await _reply_html(
+            message,
+            i18n.t(
+                "commands.import.errors.invalid_lines.template", locale, invalid_lines=invalid_lines
+            ),
+        )
         return
 
     chat_kind = ChatIdKind.from_chat_id(message.chat.id)
     members = await repos.users.get_chat_members(chat_kind)
     members_by_short = {
-        _convert_name_for_import(original_bot, m.name): (m.uid, m.name)
-        for m in members
+        _convert_name_for_import(original_bot, m.name): (m.uid, m.name) for m in members
     }
     member_names = set(members_by_short.keys())
 
@@ -709,7 +808,7 @@ async def cmd_import(message: Message, bot: Bot, repos: Repositories, i18n: I18n
         length = int(m.group("length"))
         parsed.append((name, length))
 
-    existing = [(n, l) for (n, l) in parsed if n in member_names]
+    existing = [(name, length) for (name, length) in parsed if name in member_names]
     not_found = [n for (n, _) in parsed if n not in member_names]
 
     imported_uids = {u.uid for u in await repos.import_repo.get_imported_users(message.chat.id)}
@@ -731,14 +830,24 @@ async def cmd_import(message: Message, bot: Bot, repos: Repositories, i18n: I18n
     if to_import:
         title = i18n.t("commands.import.result.titles.imported", locale)
         lines = "\n".join(
-            i18n.t("commands.import.result.line.imported", locale, name=escape_html(full_name), length=length)
+            i18n.t(
+                "commands.import.result.line.imported",
+                locale,
+                name=escape_html(full_name),
+                length=length,
+            )
             for (_, full_name, length) in to_import
         )
         parts.append(f"{title}\n{lines}")
     if already_present:
         title = i18n.t("commands.import.result.titles.already_present", locale)
         lines = "\n".join(
-            i18n.t("commands.import.result.line.already_present", locale, name=escape_html(full_name), length=length)
+            i18n.t(
+                "commands.import.result.line.already_present",
+                locale,
+                name=escape_html(full_name),
+                length=length,
+            )
             for (full_name, length) in already_present
         )
         parts.append(f"{title}\n{lines}")
@@ -750,7 +859,11 @@ async def cmd_import(message: Message, bot: Bot, repos: Repositories, i18n: I18n
         )
         parts.append(f"{title}\n{lines}")
 
-    await _reply_html(message, "\n\n".join(parts) if parts else i18n.t("commands.import.result.titles.not_found", locale))
+    await _reply_html(
+        message,
+        "\n\n".join(parts) if parts else i18n.t("commands.import.result.titles.not_found", locale),
+    )
+
 
 async def main() -> None:
     repo_root = Path(__file__).resolve().parents[2]
@@ -765,7 +878,9 @@ async def main() -> None:
     await apply_sql_migrations(db.pool, repo_root / "migrations")
 
     i18n = I18n.from_locales_dir(repo_root / "locales", fallback_locale="en")
-    privacy_policy = load_privacy_policy(rust_privacy_dir=repo_root / "src" / "handlers" / "privacy")
+    privacy_policy = load_privacy_policy(
+        rust_privacy_dir=repo_root / "src" / "handlers" / "privacy"
+    )
 
     help_context = {
         "bot_name": "DickGrowerBot",
@@ -779,7 +894,9 @@ async def main() -> None:
         "git_repo": _require_env("HELP_GIT_REPO"),
         "help_pussies_percentage": float(os.getenv("HELP_PUSSIES_COEF", "0.0")) * 100.0,
     }
-    help_container = render_help_messages(rust_help_dir=repo_root / "src" / "help", context=help_context)
+    help_container = render_help_messages(
+        rust_help_dir=repo_root / "src" / "help", context=help_context
+    )
 
     repos = Repositories.create(db.pool, cfg)
     perks = [
@@ -789,6 +906,8 @@ async def main() -> None:
     incrementor = Incrementor(repos.dicks, perks)
 
     bot = Bot(token=token, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
+    # Remove persistent "Open" menu button (WebApp) if it was set earlier.
+    await bot.set_chat_menu_button(menu_button=MenuButtonDefault())
     dp = Dispatcher(storage=MemoryStorage())
     dp.include_router(router)
     dp["repos"] = repos
