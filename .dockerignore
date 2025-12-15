@@ -1,5 +1,7 @@
 .git*
 .idea
+.vscode
+.github/workflows
 /target
 /data
 /data-py
