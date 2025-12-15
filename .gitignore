@@ -1,6 +1,8 @@
 /target
 /data
 /data-py
+/.vscode
+/.github/workflows
 .env
 .idea
 .vscode
