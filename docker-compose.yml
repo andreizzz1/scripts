@@ -1,16 +1,14 @@
-version: "3.7"
 services:
-  DickGrowerBot:
-    build: .
-    image: kozalosev/dickgrowerbot
-    container_name: dickgrowerbot
+  dickgrowerbot-py:
+    build:
+      context: .
+      dockerfile: pybot/Dockerfile
+    container_name: dickgrowerbot-py
     restart: unless-stopped
     environment:
       - TELOXIDE_TOKEN
-      - RUST_LOG
-      - WEBHOOK_URL
+      - LOG_LEVEL
       - DATABASE_URL=postgres://${POSTGRES_USER:?error}:${POSTGRES_PASSWORD:?error}@${POSTGRES_HOST:?error}:${POSTGRES_PORT:-5432}/${POSTGRES_DB:?error}
-      - DATABASE_MAX_CONNECTIONS
       - HELP_ADMIN_CHANNEL_RU
       - HELP_ADMIN_CHANNEL_EN
       - HELP_ADMIN_CHAT_RU
@@ -37,19 +35,15 @@ services:
       - ANNOUNCEMENT_MAX_SHOWS
       - ANNOUNCEMENT_EN
       - ANNOUNCEMENT_RU
-    expose:
-      - 8080
+    depends_on:
+      postgres:
+        condition: service_healthy
     networks:
       - postgres-network
-    labels:
-      - "com.centurylinklabs.watchtower.enable=true"
-    logging:
-      driver: local
-    depends_on:
-      - postgres
+
   postgres:
     image: postgres:14.5-alpine
-    container_name: dickgrowerbot-postgresql
+    container_name: dickgrowerbot-py-postgresql
     environment:
       - POSTGRES_PORT
       - POSTGRES_DB
@@ -59,7 +53,7 @@ services:
     expose:
       - ${POSTGRES_PORT}
     volumes:
-      - ./data:/var/lib/postgresql/data
+      - ./data-py:/var/lib/postgresql/data
     healthcheck:
       test: [ "CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB" ]
       interval: 10s
@@ -69,8 +63,7 @@ services:
     restart: unless-stopped
     networks:
       - postgres-network
-    logging:
-      driver: local
+
 networks:
   postgres-network:
     driver: bridge
