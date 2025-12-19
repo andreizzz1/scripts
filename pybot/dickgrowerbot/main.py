@@ -136,7 +136,7 @@ def _inline_result(
     return InlineQueryResultArticle(
         id=result_id,
         title=title,
-        input_message_content=InputTextMessageContent(text, parse_mode=ParseMode.HTML),
+        input_message_content=InputTextMessageContent(text=text, parse_mode=ParseMode.HTML),
         reply_markup=button,
     )
 
