@@ -46,8 +46,8 @@ cp .env.example .env
 Set `TELOXIDE_TOKEN` in `.env` (and optionally `WEBHOOK_URL` if you want webhook mode), then:
 
 ```shell
-docker-compose up -d --build
-docker-compose logs -f DickGrowerBot
+docker compose -p dickgrowerbot-py up -d --build
+docker compose -p dickgrowerbot-py logs -f dickgrowerbot-py
 ```
 
 ### How to rebuild .sqlx queries?

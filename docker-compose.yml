@@ -7,7 +7,7 @@ services:
     environment:
       - TELOXIDE_TOKEN
       - LOG_LEVEL
-      - DATABASE_URL=postgres://${POSTGRES_USER:?error}:${POSTGRES_PASSWORD:?error}@${POSTGRES_HOST:?error}:${POSTGRES_PORT:-5432}/${POSTGRES_DB:?error}
+      - DATABASE_URL=postgres://${POSTGRES_USER:?error}:${POSTGRES_PASSWORD:?error}@${POSTGRES_HOST:-postgres}:${POSTGRES_PORT:-5432}/${POSTGRES_DB:?error}
       - HELP_ADMIN_CHANNEL_RU
       - HELP_ADMIN_CHANNEL_EN
       - HELP_ADMIN_CHAT_RU
@@ -49,7 +49,7 @@ services:
       - POSTGRES_PASSWORD
       - PGDATA=/var/lib/postgresql/data/pgdata
     expose:
-      - ${POSTGRES_PORT}
+      - ${POSTGRES_PORT:-5432}
     volumes:
       - ./data-py:/var/lib/postgresql/data
     healthcheck:

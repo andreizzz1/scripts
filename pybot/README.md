@@ -35,11 +35,18 @@ python -m dickgrowerbot.main
 From the repository root:
 
 ```bash
-docker-compose -p dickgrowerbot-py -f docker-compose.python.yml up -d --build
-docker logs -f dickgrowerbot-py
+cp .env.example .env
+# Set TELOXIDE_TOKEN in .env (and keep POSTGRES_HOST=postgres for Docker Compose).
+docker compose -p dickgrowerbot-py up -d --build
+docker compose -p dickgrowerbot-py logs -f dickgrowerbot-py
 ```
 
 If you see `TelegramConflictError: ... only one bot instance is running`, stop any other container/process using the same bot token (only one polling `getUpdates` consumer is allowed).
+
+## VS Code: Docker extension doesn't show containers?
+
+The Docker extension shows containers from the current Docker context/daemon.
+If you use VS Code Remote (WSL/SSH/Dev Container), make sure the Docker extension is running against the same Docker engine that you run `docker compose` on (Command Palette: `Docker: Switch Context`).
 
 ## Tests
 
