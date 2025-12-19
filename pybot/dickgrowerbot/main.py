@@ -18,6 +18,9 @@ from aiogram.types import (
     CallbackQuery,
     InlineKeyboardButton,
     InlineKeyboardMarkup,
+    InlineQuery,
+    InlineQueryResultArticle,
+    InputTextMessageContent,
     MenuButtonDefault,
     Message,
 )
@@ -36,6 +39,7 @@ from .utils import get_full_name, time_till_next_day
 CALLBACK_PREFIX_TOP_PAGE = "top:page:"
 PROMO_START_PARAM_PREFIX = "promo-"
 CALLBACK_PREFIX_PVP = "pvp:"
+INLINE_CALLBACK_PREFIX = "inline:"
 ORIGINAL_BOT_USERNAMES = {"pipisabot", "kraft28_bot"}
 
 # 22.06.2024 UTC in ms
@@ -88,6 +92,52 @@ async def _reply_html(
 ) -> None:
     await message.answer(
         text, parse_mode=ParseMode.HTML, reply_markup=reply_markup, disable_web_page_preview=True
+    )
+
+
+async def _edit_callback_message(
+    query: CallbackQuery,
+    text: str,
+    *,
+    reply_markup: InlineKeyboardMarkup | None = None,
+    bot: Bot | None = None,
+) -> None:
+    if query.message:
+        await query.message.edit_text(
+            text, parse_mode=ParseMode.HTML, reply_markup=reply_markup, disable_web_page_preview=True
+        )
+        return
+    if query.inline_message_id and bot:
+        await bot.edit_message_text(
+            text=text,
+            inline_message_id=query.inline_message_id,
+            parse_mode=ParseMode.HTML,
+            reply_markup=reply_markup,
+            disable_web_page_preview=True,
+        )
+        return
+
+
+def _inline_button(i18n: I18n, locale: str, data: str) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text=i18n.t("inline.results.button", locale), callback_data=data)]
+        ]
+    )
+
+
+def _inline_result(
+    *,
+    result_id: str,
+    title: str,
+    text: str,
+    button: InlineKeyboardMarkup,
+) -> InlineQueryResultArticle:
+    return InlineQueryResultArticle(
+        id=result_id,
+        title=title,
+        input_message_content=InputTextMessageContent(text, parse_mode=ParseMode.HTML),
+        reply_markup=button,
     )
 
 
@@ -242,7 +292,7 @@ async def cmd_top(message: Message, repos: Repositories, cfg: AppConfig, i18n: I
 
 @router.callback_query(F.data.startswith(CALLBACK_PREFIX_TOP_PAGE))
 async def cb_top_page(
-    query: CallbackQuery, repos: Repositories, cfg: AppConfig, i18n: I18n
+    query: CallbackQuery, bot: Bot, repos: Repositories, cfg: AppConfig, i18n: I18n
 ) -> None:
     if query.from_user is None or query.data is None:
         return
@@ -263,11 +313,13 @@ async def cb_top_page(
         await query.answer("Invalid page", show_alert=True)
         return
 
-    chat_id = query.message.chat.id if query.message else None
-    if chat_id is None:
+    if query.message:
+        chat_kind = ChatIdKind.from_chat_id(query.message.chat.id)
+    elif query.chat_instance:
+        chat_kind = ChatIdKind.from_chat_instance(query.chat_instance)
+    else:
         await query.answer("No chat", show_alert=True)
         return
-    chat_kind = ChatIdKind.from_chat_id(chat_id)
 
     text, has_more = await _render_top(
         requester_uid=query.from_user.id,
@@ -279,8 +331,8 @@ async def cb_top_page(
         locale=locale,
     )
     await query.answer()
-    await query.message.edit_text(
-        text, parse_mode=ParseMode.HTML, reply_markup=_build_top_keyboard(page, has_more)
+    await _edit_callback_message(
+        query, text, reply_markup=_build_top_keyboard(page, has_more), bot=bot
     )
 
 
@@ -491,7 +543,9 @@ async def _activate_promo(
 
 
 @router.callback_query(F.data.startswith("loan:"))
-async def cb_loan(query: CallbackQuery, repos: Repositories, cfg: AppConfig, i18n: I18n) -> None:
+async def cb_loan(
+    query: CallbackQuery, bot: Bot, repos: Repositories, cfg: AppConfig, i18n: I18n
+) -> None:
     if query.data is None or query.from_user is None:
         return
     parts = query.data.split(":")
@@ -515,9 +569,17 @@ async def cb_loan(query: CallbackQuery, repos: Repositories, cfg: AppConfig, i18
             try:
                 await query.message.delete()
             except Exception:
-                await query.message.edit_text(
-                    i18n.t("commands.loan.callback.refused", locale), parse_mode=ParseMode.HTML
+                await _edit_callback_message(
+                    query,
+                    i18n.t("commands.loan.callback.refused", locale),
+                    bot=bot,
                 )
+        elif query.inline_message_id:
+            await _edit_callback_message(
+                query,
+                i18n.t("commands.loan.callback.refused", locale),
+                bot=bot,
+            )
         return
 
     if action != "confirmed":
@@ -526,11 +588,11 @@ async def cb_loan(query: CallbackQuery, repos: Repositories, cfg: AppConfig, i18
     if len(parts) < 5:
         # old format without payout ratio -> treat as changed
         await query.answer()
-        if query.message:
-            await query.message.edit_text(
-                i18n.t("commands.loan.callback.payout_ratio_changed", locale),
-                parse_mode=ParseMode.HTML,
-            )
+        await _edit_callback_message(
+            query,
+            i18n.t("commands.loan.callback.payout_ratio_changed", locale),
+            bot=bot,
+        )
         return
     try:
         value = int(parts[3])
@@ -544,22 +606,27 @@ async def cb_loan(query: CallbackQuery, repos: Repositories, cfg: AppConfig, i18
         return
     if payout_ratio != cfg.loan_payout_ratio:
         await query.answer()
-        if query.message:
-            await query.message.edit_text(
-                i18n.t("commands.loan.callback.payout_ratio_changed", locale),
-                parse_mode=ParseMode.HTML,
-            )
+        await _edit_callback_message(
+            query,
+            i18n.t("commands.loan.callback.payout_ratio_changed", locale),
+            bot=bot,
+        )
         return
 
-    if not query.message:
+    if query.message:
+        chat_kind = ChatIdKind.from_chat_id(query.message.chat.id)
+    elif query.chat_instance:
+        chat_kind = ChatIdKind.from_chat_instance(query.chat_instance)
+    else:
         await query.answer("No message", show_alert=True)
         return
-    await repos.loans.borrow(uid, ChatIdKind.from_chat_id(query.message.chat.id), value)
+    await repos.loans.borrow(uid, chat_kind, value)
     await query.answer()
-    if query.message:
-        await query.message.edit_text(
-            i18n.t("commands.loan.callback.success", locale), parse_mode=ParseMode.HTML
-        )
+    await _edit_callback_message(
+        query,
+        i18n.t("commands.loan.callback.success", locale),
+        bot=bot,
+    )
 
 
 def _new_short_timestamp() -> int:
@@ -602,7 +669,9 @@ async def cmd_pvp(
 
 
 @router.callback_query(F.data.startswith(CALLBACK_PREFIX_PVP))
-async def cb_pvp(query: CallbackQuery, repos: Repositories, cfg: AppConfig, i18n: I18n) -> None:
+async def cb_pvp(
+    query: CallbackQuery, bot: Bot, repos: Repositories, cfg: AppConfig, i18n: I18n
+) -> None:
     if query.data is None or query.from_user is None:
         return
     locale = normalize_locale(query.from_user.language_code)
@@ -622,10 +691,13 @@ async def cb_pvp(query: CallbackQuery, repos: Repositories, cfg: AppConfig, i18n
         await query.answer(i18n.t("commands.pvp.errors.same_person", locale), show_alert=True)
         return
 
-    if not query.message:
+    if query.message:
+        chat = ChatIdPartiality.from_chat_id(query.message.chat.id)
+    elif query.chat_instance:
+        chat = ChatIdPartiality.from_chat_instance(query.chat_instance)
+    else:
         await query.answer(i18n.t("inline.callback.errors.no_data", locale), show_alert=True)
         return
-    chat = ChatIdPartiality.from_chat_id(query.message.chat.id)
     chat_kind = chat.kind(cfg.features.chats_merging)
 
     enough_initiator = await repos.dicks.check_dick(chat_kind, initiator_uid, bet)
@@ -716,9 +788,301 @@ async def cb_pvp(query: CallbackQuery, repos: Repositories, cfg: AppConfig, i18n
         main_part = f"{main_part}\n\n{winner_pos}\n{loser_pos}"
 
     await query.answer()
-    await query.message.edit_text(
-        f"{main_part}{withheld_part}{stats_part}", parse_mode=ParseMode.HTML
+    await _edit_callback_message(
+        query,
+        f"{main_part}{withheld_part}{stats_part}",
+        bot=bot,
     )
+
+
+@router.inline_query()
+async def inline_menu(query: InlineQuery, i18n: I18n, cfg: AppConfig) -> None:
+    locale = normalize_locale(query.from_user.language_code)
+    text = i18n.t("inline.results.text", locale)
+    raw = (query.query or "").strip()
+    bet = 10
+    if raw.isdigit():
+        bet = int(raw)
+    if bet <= 0:
+        bet = 10
+
+    results = [
+        _inline_result(
+            result_id=f"grow:{query.id}",
+            title=i18n.t("inline.results.titles.grow", locale),
+            text=text,
+            button=_inline_button(i18n, locale, f"{INLINE_CALLBACK_PREFIX}grow"),
+        ),
+        _inline_result(
+            result_id=f"top:{query.id}",
+            title=i18n.t("inline.results.titles.top", locale),
+            text=text,
+            button=_inline_button(i18n, locale, f"{INLINE_CALLBACK_PREFIX}top:0"),
+        ),
+        _inline_result(
+            result_id=f"dod:{query.id}",
+            title=i18n.t("inline.results.titles.dick_of_day", locale),
+            text=text,
+            button=_inline_button(i18n, locale, f"{INLINE_CALLBACK_PREFIX}dod"),
+        ),
+        _inline_result(
+            result_id=f"loan:{query.id}",
+            title=i18n.t("inline.results.titles.loan", locale),
+            text=text,
+            button=_inline_button(i18n, locale, f"{INLINE_CALLBACK_PREFIX}loan"),
+        ),
+        _inline_result(
+            result_id=f"pvp:{query.id}",
+            title=i18n.t("inline.results.titles.pvp", locale, bet=bet),
+            text=text,
+            button=_inline_button(i18n, locale, f"{INLINE_CALLBACK_PREFIX}pvp:{bet}"),
+        ),
+    ]
+    if cfg.features.pvp.show_stats:
+        results.append(
+            _inline_result(
+                result_id=f"stats:{query.id}",
+                title=i18n.t("inline.results.titles.stats", locale),
+                text=text,
+                button=_inline_button(i18n, locale, f"{INLINE_CALLBACK_PREFIX}stats"),
+            )
+        )
+    await query.answer(results, cache_time=1, is_personal=True)
+
+
+@router.callback_query(F.data.startswith(INLINE_CALLBACK_PREFIX))
+async def cb_inline(
+    query: CallbackQuery,
+    bot: Bot,
+    repos: Repositories,
+    incrementor: Incrementor,
+    cfg: AppConfig,
+    i18n: I18n,
+) -> None:
+    if query.from_user is None or query.data is None:
+        return
+    if query.chat_instance:
+        chat = ChatIdPartiality.from_chat_instance(query.chat_instance)
+    elif query.message:
+        chat = ChatIdPartiality.from_chat_id(query.message.chat.id)
+    else:
+        await query.answer(i18n.t("inline.callback.errors.no_data", "en"), show_alert=True)
+        return
+
+    locale = normalize_locale(query.from_user.language_code)
+    parts = query.data.split(":")
+    if len(parts) < 2:
+        await query.answer(i18n.t("inline.callback.errors.unknown_data", locale), show_alert=True)
+        return
+
+    action = parts[1]
+    chat_kind = chat.kind(cfg.features.chats_merging)
+
+    if action == "grow":
+        name = get_full_name(query.from_user)
+        user = await repos.users.create_or_update(query.from_user.id, name)
+        days_since_registration = int(
+            (datetime.now(tz=timezone.utc) - user.created_at).total_seconds() // 86400
+        )
+        incr = await incrementor.growth_increment(
+            query.from_user.id, chat_kind, days_since_registration
+        )
+        try:
+            result = await repos.dicks.create_or_grow(query.from_user.id, chat, incr.total)
+            event_key = "shrunk" if incr.total < 0 else "grown"
+            event = i18n.t(f"commands.grow.direction.{event_key}", locale)
+            answer = i18n.t(
+                "commands.grow.result",
+                locale,
+                event=event,
+                incr=abs(incr.total),
+                length=result.new_length,
+            )
+            if result.pos_in_top is not None:
+                answer = f"{answer}\n{i18n.t('commands.grow.position', locale, pos=result.pos_in_top)}"
+        except asyncpg.PostgresError as e:
+            if getattr(e, "sqlstate", None) == "GD0E1":
+                answer = i18n.t("commands.grow.tomorrow", locale)
+            else:
+                raise
+        answer = f"{answer}{time_till_next_day(i18n, locale)}"
+        await query.answer()
+        await _edit_callback_message(query, answer, bot=bot)
+        return
+
+    if action == "top":
+        try:
+            page = int(parts[2]) if len(parts) > 2 else 0
+        except ValueError:
+            page = 0
+        text, has_more = await _render_top(
+            requester_uid=query.from_user.id,
+            chat_kind=chat_kind,
+            page=page,
+            repos=repos,
+            cfg=cfg,
+            i18n=i18n,
+            locale=locale,
+        )
+        keyboard = _build_top_keyboard(page, has_more) if has_more and cfg.features.top_unlimited else None
+        await query.answer()
+        await _edit_callback_message(query, text, reply_markup=keyboard, bot=bot)
+        return
+
+    if action == "dod":
+        if cfg.features.dod_selection_mode == DickOfDaySelectionMode.WEIGHTS:
+            winner = await repos.users.get_random_active_member_with_poor_in_priority(chat_kind)
+        elif cfg.features.dod_selection_mode == DickOfDaySelectionMode.EXCLUSION and cfg.dod_rich_exclusion_ratio:
+            winner = await repos.users.get_random_active_poor_member(
+                chat_kind, cfg.dod_rich_exclusion_ratio
+            )
+        else:
+            winner = await repos.users.get_random_active_member(chat_kind)
+
+        if winner is None:
+            await query.answer()
+            await _edit_callback_message(
+                query, i18n.t("commands.dod.no_candidates", locale), bot=bot
+            )
+            return
+
+        incr = await incrementor.dod_increment(query.from_user.id, chat_kind)
+        try:
+            result = await repos.dicks.set_dod_winner(chat, winner.uid, incr.total)
+            if result is None:
+                await _edit_callback_message(
+                    query, i18n.t("commands.dod.no_candidates", locale), bot=bot
+                )
+                return
+            answer = i18n.t(
+                "commands.dod.result",
+                locale,
+                uid=winner.uid,
+                name=escape_html(winner.name),
+                growth=incr.total,
+                length=result.new_length,
+            )
+            if result.pos_in_top is not None:
+                answer = f"{answer}\n{i18n.t('commands.dod.position', locale, pos=result.pos_in_top)}"
+        except asyncpg.PostgresError as e:
+            if getattr(e, "sqlstate", None) == "GD0E2":
+                answer = i18n.t(
+                    "commands.dod.already_chosen", locale, name=str(getattr(e, "message", ""))
+                )
+            else:
+                raise
+
+        answer = f"{answer}{time_till_next_day(i18n, locale)}"
+        await query.answer()
+        await _edit_callback_message(query, answer, bot=bot)
+        return
+
+    if action == "loan":
+        maybe_loan = await repos.loans.get_active_loan(query.from_user.id, chat_kind)
+        if maybe_loan and not cfg.features.multiple_loans:
+            await query.answer()
+            await _edit_callback_message(
+                query, i18n.t("commands.loan.debt", locale, debt=maybe_loan.debt), bot=bot
+            )
+            return
+        if cfg.loan_payout_ratio <= 0.0 or cfg.loan_payout_ratio >= 1.0:
+            await query.answer()
+            await _edit_callback_message(
+                query, i18n.t("errors.feature_disabled", locale), bot=bot
+            )
+            return
+        length = await repos.dicks.fetch_length(query.from_user.id, chat_kind)
+        if length >= 0:
+            await query.answer()
+            await _edit_callback_message(
+                query, i18n.t("commands.loan.errors.positive_length", locale), bot=bot
+            )
+            return
+        debt = abs(length)
+        payout_percentage = f"{cfg.loan_payout_ratio * 100.0:.2f}%"
+        data_confirm = f"loan:{query.from_user.id}:confirmed:{debt}:{cfg.loan_payout_ratio}"
+        data_refuse = f"loan:{query.from_user.id}:refused"
+        keyboard = InlineKeyboardMarkup(
+            inline_keyboard=[
+                [
+                    InlineKeyboardButton(
+                        text=i18n.t("commands.loan.confirmation.buttons.agree", locale),
+                        callback_data=data_confirm,
+                    ),
+                    InlineKeyboardButton(
+                        text=i18n.t("commands.loan.confirmation.buttons.disagree", locale),
+                        callback_data=data_refuse,
+                    ),
+                ]
+            ]
+        )
+        await query.answer()
+        await _edit_callback_message(
+            query,
+            i18n.t(
+                "commands.loan.confirmation.text",
+                locale,
+                debt=debt,
+                payout_percentage=payout_percentage,
+            ),
+            reply_markup=keyboard,
+            bot=bot,
+        )
+        return
+
+    if action == "stats":
+        if not cfg.features.pvp.show_stats:
+            await query.answer()
+            await _edit_callback_message(
+                query, i18n.t("errors.feature_disabled", locale), bot=bot
+            )
+            return
+        dick = await repos.dicks.fetch_dick(query.from_user.id, chat_kind)
+        length = dick.length if dick else 0
+        pos = dick.position if dick and dick.position is not None else 0
+        length_stats = i18n.t("commands.stats.length", locale, length=length, pos=pos)
+        pvp = await repos.pvp_stats.get_stats(chat_kind, query.from_user.id)
+        pvp_stats = i18n.t(
+            "commands.stats.pvp",
+            locale,
+            win_rate=pvp.win_rate_formatted(),
+            battles=pvp.battles_total,
+            wins=pvp.battles_won,
+            win_streak=pvp.win_streak_max,
+            acquired=pvp.acquired_length,
+            lost=pvp.lost_length,
+        )
+        if cfg.features.pvp.show_stats_notice:
+            notice = i18n.t("commands.stats.notice", locale)
+            pvp_stats = f"{pvp_stats}\n\n<i>{notice}</i>"
+        await query.answer()
+        await _edit_callback_message(query, f"{length_stats}\n\n{pvp_stats}", bot=bot)
+        return
+
+    if action == "pvp":
+        try:
+            bet = int(parts[2]) if len(parts) > 2 else 0
+        except ValueError:
+            bet = 0
+        if bet <= 0:
+            await query.answer(i18n.t("commands.pvp.errors.no_args", locale), show_alert=True)
+            return
+        enough = await repos.dicks.check_dick(chat_kind, query.from_user.id, bet)
+        if not enough:
+            await query.answer(i18n.t("commands.pvp.errors.not_enough.initiator", locale), show_alert=True)
+            return
+        name = escape_html(get_full_name(query.from_user))
+        text = i18n.t("commands.pvp.results.start", locale, name=name, bet=bet)
+        btn_label = i18n.t("commands.pvp.button", locale)
+        btn_data = f"{CALLBACK_PREFIX_PVP}{query.from_user.id}:{bet}:{_new_short_timestamp()}"
+        keyboard = InlineKeyboardMarkup(
+            inline_keyboard=[[InlineKeyboardButton(text=btn_label, callback_data=btn_data)]]
+        )
+        await query.answer()
+        await _edit_callback_message(query, text, reply_markup=keyboard, bot=bot)
+        return
+
+    await query.answer(i18n.t("inline.callback.errors.unknown_data", locale), show_alert=True)
 
 
 @router.message(Command("import"))
